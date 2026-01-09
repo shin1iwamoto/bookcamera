@@ -1,102 +1,80 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <title>蔵書管理アプリ（CSV対応）</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>蔵書管理アプリ（iPhone最適化）</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 p-4">
 
-  <div class="max-w-3xl mx-auto">
-    <h1 class="text-2xl font-bold text-center mb-4">📚 蔵書管理アプリ（CSV対応）</h1>
+  <div class="max-w-md mx-auto">
+    <h1 class="text-xl font-bold text-center mb-4">📚 蔵書管理アプリ</h1>
 
-    <!-- カメラ映像（canvas） -->
-    <div class="flex flex-col items-center space-y-2 mb-6">
-      <canvas id="camera-canvas" width="320" height="200" class="bg-black border rounded"></canvas>
-      <div class="flex space-x-2">
-        <button onclick="startScanner()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">カメラ起動</button>
-        <button onclick="stopScanner()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">カメラ停止</button>
-      </div>
+    <!-- カメラ表示領域 -->
+    <div id="reader" class="w-full h-[280px] rounded border border-gray-400 mx-auto mb-4"></div>
+
+    <!-- ボタン類 -->
+    <div class="flex flex-col sm:flex-row justify-center items-center gap-2 mb-4">
+      <button onclick="startScanner()" class="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">カメラ起動</button>
+      <button onclick="stopScanner()" class="w-full sm:w-auto bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">カメラ停止</button>
     </div>
 
-    <!-- CSV機能ボタン -->
-    <div class="flex justify-center space-x-4 mb-6">
-      <button onclick="exportCSV()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">エクスポート</button>
-      <label class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded cursor-pointer">
+    <!-- CSV操作 -->
+    <div class="flex flex-col sm:flex-row justify-center items-center gap-2 mb-6">
+      <button onclick="exportCSV()" class="w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">エクスポート</button>
+      <label class="w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded text-center cursor-pointer">
         インポート
         <input type="file" id="import-file" accept=".csv" class="hidden" onchange="importCSV(event)">
       </label>
     </div>
 
     <!-- 書籍リスト -->
-    <h2 class="text-xl font-semibold mb-2">📖 登録済み書籍</h2>
+    <h2 class="text-lg font-semibold mb-2">📖 登録済み書籍</h2>
     <ul id="book-list" class="space-y-2"></ul>
   </div>
 
   <script>
-    let isScanning = false;
-    const canvas = document.getElementById("camera-canvas");
-    const ctx = canvas.getContext("2d");
+    let scanner;
 
     function startScanner() {
-      if (isScanning) return;
-      isScanning = true;
+      if (scanner) return;
+      scanner = new Html5Qrcode("reader");
 
-      Quagga.init({
-        inputStream: {
-          type: "LiveStream",
-          target: canvas,
-          constraints: {
-            width: 320,
-            height: 200,
-            facingMode: "environment"
-          }
-        },
-        locator: { patchSize: "medium", halfSample: true },
-        decoder: { readers: ["ean_reader"] },
-        locate: true
-      }, function (err) {
-        if (err) {
-          console.error(err);
-          alert("カメラの起動に失敗しました");
-          return;
-        }
-        Quagga.start();
-      });
-
-      Quagga.onProcessed(result => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (result && result.box) drawBox(result.box, "blue");
-      });
-
-      Quagga.onDetected(async result => {
-        const code = result.codeResult.code;
-        if (code && code.length === 13 && code.startsWith("978")) {
-          Quagga.offDetected();
-          stopScanner();
-          await handleISBN(code);
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length) {
+          scanner.start(
+            { facingMode: "environment" },
+            {
+              fps: 10,
+              qrbox: { width: 250, height: 250 }
+            },
+            onScanSuccess
+          ).catch(err => {
+            console.error("起動失敗:", err);
+            alert("カメラを開始できませんでした。");
+          });
+        } else {
+          alert("カメラが見つかりませんでした");
         }
       });
     }
 
     function stopScanner() {
-      if (!isScanning) return;
-      Quagga.stop();
-      isScanning = false;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (scanner) {
+        scanner.stop().then(() => {
+          scanner.clear();
+          scanner = null;
+        }).catch(err => console.error("停止失敗:", err));
+      }
     }
 
-    function drawBox(box, color) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(box[0][0], box[0][1]);
-      for (let i = 1; i < box.length; i++) {
-        ctx.lineTo(box[i][0], box[i][1]);
+    async function onScanSuccess(decodedText) {
+      if (/^978\d{10}$/.test(decodedText)) {
+        stopScanner();
+        await handleISBN(decodedText);
       }
-      ctx.closePath();
-      ctx.stroke();
     }
 
     async function handleISBN(isbn) {
@@ -106,13 +84,13 @@
         return;
       }
 
-      const bookInfo = await fetchBookInfo(isbn);
-      if (!bookInfo) {
+      const info = await fetchBookInfo(isbn);
+      if (!info) {
         alert("書籍情報を取得できませんでした");
         return;
       }
 
-      books.unshift(bookInfo);
+      books.unshift(info);
       localStorage.setItem("books", JSON.stringify(books));
       renderBooks();
     }
@@ -123,10 +101,9 @@
         const data = await res.json();
         const item = data.items?.[0];
         if (!item) return null;
-
         const info = item.volumeInfo;
         return {
-          isbn: isbn,
+          isbn,
           title: info.title || "タイトル不明",
           authors: info.authors || ["著者不明"]
         };
@@ -142,14 +119,14 @@
       list.innerHTML = "";
       books.forEach((book, index) => {
         const li = document.createElement("li");
-        li.className = "bg-white rounded shadow p-3 flex justify-between items-center";
+        li.className = "bg-white p-3 rounded shadow text-sm flex justify-between items-center";
         li.innerHTML = `
-          <div>
+          <div class="flex-1 mr-2">
             <div class="font-semibold">${book.title}</div>
-            <div class="text-sm text-gray-600">${book.authors.join(", ")}</div>
+            <div class="text-gray-600">${book.authors.join(", ")}</div>
             <div class="text-xs text-gray-400">ISBN: ${book.isbn}</div>
           </div>
-          <button onclick="deleteBook(${index})" class="text-red-500 hover:underline">削除</button>
+          <button onclick="deleteBook(${index})" class="text-red-500 hover:underline text-sm">削除</button>
         `;
         list.appendChild(li);
       });
@@ -193,7 +170,6 @@
         for (let i = 1; i < lines.length; i++) {
           const [title, authors, isbn] = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
           if (!isbn || !isbn.match(/^\d{13}$/)) continue;
-
           newBooks.push({ title, authors: authors.split(";"), isbn });
         }
 
@@ -206,7 +182,7 @@
 
         localStorage.setItem("books", JSON.stringify(books));
         renderBooks();
-        event.target.value = ""; // 同じファイルを再アップロードできるようにする
+        event.target.value = "";
         alert("インポートが完了しました");
       };
       reader.readAsText(file);
