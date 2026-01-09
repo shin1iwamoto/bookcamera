@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>蔵書管理アプリ（CSV対応）</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 p-4">
+
+  <div class="max-w-3xl mx-auto">
+    <h1 class="text-2xl font-bold text-center mb-4">📚 蔵書管理アプリ（CSV対応）</h1>
+
+    <!-- カメラ映像（canvas） -->
+    <div class="flex flex-col items-center space-y-2 mb-6">
+      <canvas id="camera-canvas" width="320" height="200" class="bg-black border rounded"></canvas>
+      <div class="flex space-x-2">
+        <button onclick="startScanner()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">カメラ起動</button>
+        <button onclick="stopScanner()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">カメラ停止</button>
+      </div>
+    </div>
+
+    <!-- CSV機能ボタン -->
+    <div class="flex justify-center space-x-4 mb-6">
+      <button onclick="exportCSV()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">エクスポート</button>
+      <label class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded cursor-pointer">
+        インポート
+        <input type="file" id="import-file" accept=".csv" class="hidden" onchange="importCSV(event)">
+      </label>
+    </div>
+
+    <!-- 書籍リスト -->
+    <h2 class="text-xl font-semibold mb-2">📖 登録済み書籍</h2>
+    <ul id="book-list" class="space-y-2"></ul>
+  </div>
+
+  <script>
+    let isScanning = false;
+    const canvas = document.getElementById("camera-canvas");
+    const ctx = canvas.getContext("2d");
+
+    function startScanner() {
+      if (isScanning) return;
+      isScanning = true;
+
+      Quagga.init({
+        inputStream: {
+          type: "LiveStream",
+          target: canvas,
+          constraints: {
+            width: 320,
+            height: 200,
+            facingMode: "environment"
+          }
+        },
+        locator: { patchSize: "medium", halfSample: true },
+        decoder: { readers: ["ean_reader"] },
+        locate: true
+      }, function (err) {
+        if (err) {
+          console.error(err);
+          alert("カメラの起動に失敗しました");
+          return;
+        }
+        Quagga.start();
+      });
+
+      Quagga.onProcessed(result => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (result && result.box) drawBox(result.box, "blue");
+      });
+
+      Quagga.onDetected(async result => {
+        const code = result.codeResult.code;
+        if (code && code.length === 13 && code.startsWith("978")) {
+          Quagga.offDetected();
+          stopScanner();
+          await handleISBN(code);
+        }
+      });
+    }
+
+    function stopScanner() {
+      if (!isScanning) return;
+      Quagga.stop();
+      isScanning = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawBox(box, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(box[0][0], box[0][1]);
+      for (let i = 1; i < box.length; i++) {
+        ctx.lineTo(box[i][0], box[i][1]);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    async function handleISBN(isbn) {
+      let books = JSON.parse(localStorage.getItem("books") || "[]");
+      if (books.some(book => book.isbn === isbn)) {
+        alert("この本はすでに登録されています");
+        return;
+      }
+
+      const bookInfo = await fetchBookInfo(isbn);
+      if (!bookInfo) {
+        alert("書籍情報を取得できませんでした");
+        return;
+      }
+
+      books.unshift(bookInfo);
+      localStorage.setItem("books", JSON.stringify(books));
+      renderBooks();
+    }
+
+    async function fetchBookInfo(isbn) {
+      try {
+        const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+        const data = await res.json();
+        const item = data.items?.[0];
+        if (!item) return null;
+
+        const info = item.volumeInfo;
+        return {
+          isbn: isbn,
+          title: info.title || "タイトル不明",
+          authors: info.authors || ["著者不明"]
+        };
+      } catch (e) {
+        console.error(e);
+        return null;
+      }
+    }
+
+    function renderBooks() {
+      const list = document.getElementById("book-list");
+      const books = JSON.parse(localStorage.getItem("books") || "[]");
+      list.innerHTML = "";
+      books.forEach((book, index) => {
+        const li = document.createElement("li");
+        li.className = "bg-white rounded shadow p-3 flex justify-between items-center";
+        li.innerHTML = `
+          <div>
+            <div class="font-semibold">${book.title}</div>
+            <div class="text-sm text-gray-600">${book.authors.join(", ")}</div>
+            <div class="text-xs text-gray-400">ISBN: ${book.isbn}</div>
+          </div>
+          <button onclick="deleteBook(${index})" class="text-red-500 hover:underline">削除</button>
+        `;
+        list.appendChild(li);
+      });
+    }
+
+    function deleteBook(index) {
+      let books = JSON.parse(localStorage.getItem("books") || "[]");
+      books.splice(index, 1);
+      localStorage.setItem("books", JSON.stringify(books));
+      renderBooks();
+    }
+
+    function exportCSV() {
+      const books = JSON.parse(localStorage.getItem("books") || "[]");
+      if (books.length === 0) {
+        alert("エクスポートする書籍がありません");
+        return;
+      }
+      const csv = ["Title,Authors,ISBN"];
+      books.forEach(book => {
+        const row = `"${book.title.replace(/"/g, '""')}","${book.authors.join(';').replace(/"/g, '""')}","${book.isbn}"`;
+        csv.push(row);
+      });
+      const blob = new Blob([csv.join("\n")], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "books.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importCSV(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const lines = e.target.result.split("\n").map(l => l.trim()).filter(Boolean);
+        const newBooks = [];
+        for (let i = 1; i < lines.length; i++) {
+          const [title, authors, isbn] = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
+          if (!isbn || !isbn.match(/^\d{13}$/)) continue;
+
+          newBooks.push({ title, authors: authors.split(";"), isbn });
+        }
+
+        let books = JSON.parse(localStorage.getItem("books") || "[]");
+        newBooks.forEach(book => {
+          if (!books.some(b => b.isbn === book.isbn)) {
+            books.unshift(book);
+          }
+        });
+
+        localStorage.setItem("books", JSON.stringify(books));
+        renderBooks();
+        event.target.value = ""; // 同じファイルを再アップロードできるようにする
+        alert("インポートが完了しました");
+      };
+      reader.readAsText(file);
+    }
+
+    window.onload = renderBooks;
+  </script>
+
+</body>
+</html>
