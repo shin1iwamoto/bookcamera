@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>蔵書管理アプリ（iPhone最適化）</title>
+  <title>蔵書管理アプリ（iPhone対応）</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -12,10 +12,10 @@
   <div class="max-w-md mx-auto">
     <h1 class="text-xl font-bold text-center mb-4">📚 蔵書管理アプリ</h1>
 
-    <!-- カメラ表示領域 -->
-    <div id="reader" class="w-full h-[280px] rounded border border-gray-400 mx-auto mb-4"></div>
+    <!-- カメラ映像 -->
+    <div id="reader" style="width: 100%; max-width: 360px; height: 300px;" class="mx-auto border border-gray-400 rounded mb-4"></div>
 
-    <!-- ボタン類 -->
+    <!-- カメラ操作 -->
     <div class="flex flex-col sm:flex-row justify-center items-center gap-2 mb-4">
       <button onclick="startScanner()" class="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">カメラ起動</button>
       <button onclick="stopScanner()" class="w-full sm:w-auto bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">カメラ停止</button>
@@ -46,14 +46,11 @@
         if (devices && devices.length) {
           scanner.start(
             { facingMode: "environment" },
-            {
-              fps: 10,
-              qrbox: { width: 250, height: 250 }
-            },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
             onScanSuccess
           ).catch(err => {
-            console.error("起動失敗:", err);
-            alert("カメラを開始できませんでした。");
+            console.error("カメラ起動エラー:", err);
+            alert("カメラを開始できませんでした。Safariの設定やHTTPSをご確認ください。");
           });
         } else {
           alert("カメラが見つかりませんでした");
@@ -66,7 +63,7 @@
         scanner.stop().then(() => {
           scanner.clear();
           scanner = null;
-        }).catch(err => console.error("停止失敗:", err));
+        }).catch(err => console.error("カメラ停止エラー:", err));
       }
     }
 
